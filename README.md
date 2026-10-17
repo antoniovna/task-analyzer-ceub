@@ -55,6 +55,27 @@ specs/ + CONTEXT_RULES.md ──► Assistente de IA ──► src/task_analyzer
 2. Os testes existem antes do código. Se um teste falha, o código muda — nunca o teste.
 3. Nenhum artefato entra em `main` sem revisão humana registrada em Pull Request.
 
+## Decisão de contrato: especificação × enunciado da Fase 2
+
+O enunciado da Fase 2 usa nomes e comportamentos genéricos que divergem da especificação da Fase 1.
+Como no SDD a especificação é a fonte da verdade, e o `CONTEXT_RULES.md` proíbe alterar a
+assinatura pública e os cenários de aceite sem nova versão da spec, este projeto segue
+`specs/task_analyzer_spec.md` (v1.0). Correspondência:
+
+| Enunciado da Fase 2 | Este projeto (spec v1.0) | Fundamento |
+|---------------------|--------------------------|------------|
+| `analyze_tasks` | `analisar_tarefas` | §1.3.1 — nomes do domínio em português |
+| `TaskValidationError` | `TaskAnalyzerError` (base) + 6 exceções específicas | §1.5 — `except TaskAnalyzerError` captura todas |
+| Datas inconsistentes → `TaskValidationError` | `DataInconsistenteError` | RN-07 |
+| `total_pendentes` | `total_em_aberto` | §1.3.3 |
+| `tempo_medio_conclusao_horas` | `tempo_medio_conclusao_min` | §1.3.3 e RN-02 (horas = minutos ÷ 60) |
+| Lista vazia → `0.0`, sem exceção | `ListaDeTarefasVaziaError` | RN-06 e RN-10 — falha explícita |
+| Apenas pendentes → `0.0`, sem exceção | `SemTarefasConcluidasError` | RN-06 — exceção específica e tratada, nunca `ZeroDivisionError` |
+| Prioridade sem concluídas → `0.0` | `None` | §1.3.3 — `0.0` confundiria "sem dados" com "instantâneo" |
+
+O requisito de fundo do enunciado — nenhuma divisão por zero e nenhuma exceção não tratada — é
+atendido: toda falha é uma exceção específica do módulo, derivada de `TaskAnalyzerError`.
+
 ## Como executar
 
 Pré-requisito: Python 3.11 ou superior.
@@ -71,6 +92,10 @@ python -m pytest --cov=src --cov-report=term-missing
 ```
 
 Meta de cobertura: **≥ 90%** de linhas em `src/`.
+
+Use `python -m pytest` (e não apenas `pytest`): a forma com `-m` coloca a raiz do repositório no
+`sys.path`, o que permite `from src.task_analyzer import ...` sem arquivos de configuração extras
+fora da árvore fixa do projeto.
 
 ## Versionamento
 
