@@ -6,6 +6,7 @@ A única função pública é ``analisar_tarefas``; as auxiliares de validação
 """
 
 import logging
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,7 +17,11 @@ _logger: Final = logging.getLogger(__name__)
 _PRIORIDADES: Final = ("baixa", "media", "alta")
 _STATUS_VALIDOS: Final = ("concluida", "pendente", "cancelada")
 _STATUS_CONCLUIDA: Final = "concluida"
+_STATUS_PENDENTE: Final = "pendente"
 _TAMANHO_MAXIMO_TITULO: Final = 200
+_CASAS_DECIMAIS: Final = 2
+_SEGUNDOS_POR_MINUTO: Final = 60.0
+_PERCENTUAL: Final = 100.0
 _CAMPOS_OBRIGATORIOS: Final[dict[str, type]] = {
     "titulo": str,
     "prioridade": str,
@@ -353,3 +358,134 @@ def _validar_unicidade(tarefas: Sequence[Tarefa]) -> None:
                 )
             )
         vistos.add(tarefa.id_tarefa)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Conclusao:
+    """Medidas internas de uma tarefa concluída, já normalizadas para UTC.
+
+    Attributes:
+        duracao_min: ``data_conclusao − data_criacao``, em minutos (RN-02).
+        atrasada: ``True`` se ``data_conclusao > prazo`` (RN-03).
+    """
+
+    duracao_min: float
+    atrasada: bool
+
+
+def _medir_conclusao(tarefa: Tarefa, data_conclusao: datetime) -> _Conclusao:
+    """Calcula duração e atraso de uma tarefa concluída sem alterar a original (RN-12).
+
+    Args:
+        tarefa: Tarefa concluída e validada.
+        data_conclusao: Data de conclusão da tarefa.
+
+    Returns:
+        Medidas da conclusão, comparadas em UTC.
+    """
+    criacao = _para_utc(tarefa.data_criacao)
+    conclusao = _para_utc(data_conclusao)
+    return _Conclusao(
+        duracao_min=(conclusao - criacao).total_seconds() / _SEGUNDOS_POR_MINUTO,
+        atrasada=conclusao > _para_utc(tarefa.prazo),
+    )
+
+
+def _medir_conclusoes(tarefas: Sequence[Tarefa]) -> list[_Conclusao]:
+    """Mede apenas as tarefas concluídas; pendentes e canceladas ficam de fora (RN-01).
+
+    Args:
+        tarefas: Tarefas validadas.
+
+    Returns:
+        Uma medida por tarefa concluída, na ordem de entrada.
+    """
+    # RN-08 já garante data_conclusao nas concluídas; a segunda condição só estreita o tipo.
+    return [
+        _medir_conclusao(tarefa, tarefa.data_conclusao)
+        for tarefa in tarefas
+        if tarefa.status == _STATUS_CONCLUIDA and tarefa.data_conclusao is not None
+    ]
+
+
+def _tempo_medio_min(conclusoes: Sequence[_Conclusao]) -> float | None:
+    """Calcula a média de duração em minutos, arredondada só no resultado (RN-05).
+
+    Args:
+        conclusoes: Medidas das tarefas concluídas.
+
+    Returns:
+        Média com 2 casas decimais, ou ``None`` se não houver conclusões (RN-06).
+    """
+    if not conclusoes:
+        return None
+    media = math.fsum(conclusao.duracao_min for conclusao in conclusoes) / len(conclusoes)
+    return round(media, _CASAS_DECIMAIS)
+
+
+def _taxa_atraso_percentual(conclusoes: Sequence[_Conclusao]) -> float | None:
+    """Calcula o percentual de conclusões após o prazo (RN-03).
+
+    Args:
+        conclusoes: Medidas das tarefas concluídas.
+
+    Returns:
+        Percentual com 2 casas decimais, ou ``None`` se não houver conclusões (RN-06).
+    """
+    if not conclusoes:
+        return None
+    atrasadas = sum(1 for conclusao in conclusoes if conclusao.atrasada)
+    return round(_PERCENTUAL * atrasadas / len(conclusoes), _CASAS_DECIMAIS)
+
+
+def _contar_status(tarefas: Sequence[Tarefa], status: str) -> int:
+    """Conta as tarefas com o status informado.
+
+    Args:
+        tarefas: Tarefas validadas.
+        status: Valor do domínio de status.
+
+    Returns:
+        Quantidade de tarefas com esse status.
+    """
+    return sum(1 for tarefa in tarefas if tarefa.status == status)
+
+
+def _indicador_da_prioridade(prioridade: str, tarefas: Sequence[Tarefa]) -> IndicadorPrioridade:
+    """Calcula os indicadores de uma prioridade; registra WARNING se não houver concluídas.
+
+    Args:
+        prioridade: Prioridade sendo calculada, usada apenas no log.
+        tarefas: Tarefas dessa prioridade.
+
+    Returns:
+        Indicador com métricas ``None`` quando não há conclusões (seção 1.3.3).
+    """
+    conclusoes = _medir_conclusoes(tarefas)
+    if not conclusoes:
+        _logger.warning(
+            "prioridade_sem_dados | prioridade=%s | total_tarefas=%d", prioridade, len(tarefas)
+        )
+    return IndicadorPrioridade(
+        total_tarefas=len(tarefas),
+        total_concluidas=len(conclusoes),
+        tempo_medio_conclusao_min=_tempo_medio_min(conclusoes),
+        taxa_atraso_percentual=_taxa_atraso_percentual(conclusoes),
+    )
+
+
+def _indicadores_por_prioridade(tarefas: Sequence[Tarefa]) -> dict[str, IndicadorPrioridade]:
+    """Agrupa as tarefas por prioridade, sempre com as três chaves fixas (RN-11).
+
+    Args:
+        tarefas: Tarefas validadas.
+
+    Returns:
+        Dicionário com as chaves ``"baixa"``, ``"media"`` e ``"alta"``, nessa ordem.
+    """
+    return {
+        prioridade: _indicador_da_prioridade(
+            prioridade, [tarefa for tarefa in tarefas if tarefa.prioridade == prioridade]
+        )
+        for prioridade in _PRIORIDADES
+    }
