@@ -489,3 +489,49 @@ def _indicadores_por_prioridade(tarefas: Sequence[Tarefa]) -> dict[str, Indicado
         )
         for prioridade in _PRIORIDADES
     }
+
+def analisar_tarefas(tarefas: list[Tarefa]) -> RelatorioProdutividade:
+    """Calcula métricas de produtividade a partir de uma lista de tarefas.
+
+    Args:
+        tarefas: Lista de objetos Tarefa previamente validados quanto ao tipo.
+
+    Returns:
+        RelatorioProdutividade com as métricas gerais e por prioridade.
+
+    Raises:
+        ListaDeTarefasVaziaError: Se a lista recebida estiver vazia.
+        ContratoDeEntradaError: Se algum campo obrigatório estiver ausente ou com tipo incorreto.
+        ValorDeDominioInvalidoError: Se prioridade ou status estiverem fora do domínio permitido.
+        DataInconsistenteError: Se houver inconsistência entre as datas de uma tarefa.
+        IdentificadorDuplicadoError: Se houver id_tarefa repetido no conjunto.
+        SemTarefasConcluidasError: Se nenhuma tarefa do conjunto estiver concluída.
+    """
+    _logger.info("analise_iniciada | total_tarefas=%d", len(tarefas))
+    _validar_conjunto(tarefas)
+
+    conclusoes = _medir_conclusoes(tarefas)
+    tempo_medio = _tempo_medio_min(conclusoes)
+    taxa_atraso = _taxa_atraso_percentual(conclusoes)
+    if tempo_medio is None or taxa_atraso is None:
+        _falhar(
+            SemTarefasConcluidasError(
+                "Nenhuma tarefa concluída no conjunto; tempo médio e taxa de atraso "
+                "não podem ser calculados (RN-06)."
+            )
+        )
+
+    relatorio = RelatorioProdutividade(
+        total_tarefas=len(tarefas),
+        total_concluidas=len(conclusoes),
+        total_em_aberto=_contar_status(tarefas, _STATUS_PENDENTE),
+        tempo_medio_conclusao_min=tempo_medio,
+        taxa_atraso_percentual=taxa_atraso,
+        indicadores_por_prioridade=_indicadores_por_prioridade(tarefas),
+    )
+    _logger.info(
+        "analise_concluida | total_tarefas=%d | total_concluidas=%d",
+        relatorio.total_tarefas,
+        relatorio.total_concluidas,
+    )
+    return relatorio
