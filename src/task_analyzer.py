@@ -5,8 +5,26 @@ e sem estado: valida as tarefas recebidas, calcula as métricas e devolve um rel
 A única função pública é ``analisar_tarefas``; as auxiliares de validação e cálculo são privadas.
 """
 
+import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Final, NoReturn
+
+_logger: Final = logging.getLogger(__name__)
+
+_PRIORIDADES: Final = ("baixa", "media", "alta")
+_STATUS_VALIDOS: Final = ("concluida", "pendente", "cancelada")
+_STATUS_CONCLUIDA: Final = "concluida"
+_TAMANHO_MAXIMO_TITULO: Final = 200
+_CAMPOS_OBRIGATORIOS: Final[dict[str, type]] = {
+    "titulo": str,
+    "prioridade": str,
+    "status": str,
+    "data_criacao": datetime,
+    "prazo": datetime,
+}
+_DATAS_OPCIONAIS: Final = ("data_inicio", "data_conclusao")
 
 
 class TaskAnalyzerError(Exception):
@@ -98,3 +116,240 @@ class RelatorioProdutividade:
     tempo_medio_conclusao_min: float
     taxa_atraso_percentual: float
     indicadores_por_prioridade: dict[str, IndicadorPrioridade]
+
+
+def _falhar(erro: TaskAnalyzerError) -> NoReturn:
+    """Registra o erro em log e o levanta (RN-10).
+
+    Args:
+        erro: Exceção do módulo, já com a mensagem final.
+
+    Raises:
+        TaskAnalyzerError: Sempre; a própria exceção recebida.
+    """
+    _logger.error("analise_interrompida | erro=%s | mensagem=%s", type(erro).__name__, erro)
+    raise erro
+
+
+def _para_utc(data: datetime) -> datetime:
+    """Devolve uma cópia da data em UTC; datas sem fuso são consideradas UTC (RN-04).
+
+    Args:
+        data: Data com ou sem informação de fuso.
+
+    Returns:
+        Data equivalente com ``tzinfo`` UTC.
+    """
+    if data.utcoffset() is None:
+        return data.replace(tzinfo=timezone.utc)
+    return data.astimezone(timezone.utc)
+
+
+def _formatar_data(data: datetime) -> str:
+    """Formata a data em UTC para mensagens de erro, no padrão ``2026-03-01T08:00Z``.
+
+    Args:
+        data: Data com ou sem informação de fuso.
+
+    Returns:
+        Texto ISO 8601 resumido, em UTC.
+    """
+    return _para_utc(data).strftime("%Y-%m-%dT%H:%MZ")
+
+
+def _validar_conjunto(tarefas: Sequence[Tarefa]) -> None:
+    """Valida o conjunto inteiro antes de qualquer cálculo.
+
+    Args:
+        tarefas: Tarefas recebidas por ``analisar_tarefas``.
+
+    Raises:
+        ListaDeTarefasVaziaError: Se a lista estiver vazia.
+        TaskAnalyzerError: Subclasse correspondente à primeira violação encontrada.
+    """
+    if not tarefas:
+        _falhar(ListaDeTarefasVaziaError("A lista de tarefas está vazia; não há o que analisar."))
+    for tarefa in tarefas:
+        _validar_tarefa(tarefa)
+    _validar_unicidade(tarefas)
+
+
+def _validar_tarefa(tarefa: Tarefa) -> None:
+    """Aplica à tarefa as verificações de tipo, formato, domínio e datas, nessa ordem.
+
+    Args:
+        tarefa: Tarefa a validar.
+
+    Raises:
+        TaskAnalyzerError: Subclasse correspondente à primeira violação encontrada.
+    """
+    _validar_tipos(tarefa)
+    _validar_formato(tarefa)
+    _validar_dominio(tarefa)
+    _validar_status_e_conclusao(tarefa)
+    _validar_cronologia(tarefa)
+
+
+def _validar_tipos(tarefa: Tarefa) -> None:
+    """Verifica presença e tipo de cada campo (spec, seção 1.3.2).
+
+    Args:
+        tarefa: Tarefa a validar.
+
+    Raises:
+        ContratoDeEntradaError: Se um campo obrigatório estiver ausente ou com tipo incorreto.
+    """
+    id_tarefa = tarefa.id_tarefa
+    if isinstance(id_tarefa, bool) or not isinstance(id_tarefa, int):
+        _falhar(
+            ContratoDeEntradaError(
+                f"id_tarefa deve ser int; recebido {type(id_tarefa).__name__} ({id_tarefa!r})."
+            )
+        )
+    for campo, tipo in _CAMPOS_OBRIGATORIOS.items():
+        valor = getattr(tarefa, campo)
+        if valor is None:
+            _falhar(
+                ContratoDeEntradaError(f"Tarefa {id_tarefa}: campo obrigatório {campo} ausente.")
+            )
+        if not isinstance(valor, tipo):
+            _falhar(
+                ContratoDeEntradaError(
+                    f"Tarefa {id_tarefa}: {campo} deve ser {tipo.__name__}; "
+                    f"recebido {type(valor).__name__}."
+                )
+            )
+    for campo in _DATAS_OPCIONAIS:
+        valor = getattr(tarefa, campo)
+        if valor is not None and not isinstance(valor, datetime):
+            _falhar(
+                ContratoDeEntradaError(
+                    f"Tarefa {id_tarefa}: {campo} deve ser datetime ou None; "
+                    f"recebido {type(valor).__name__}."
+                )
+            )
+
+
+def _validar_formato(tarefa: Tarefa) -> None:
+    """Verifica as restrições de formato de ``id_tarefa`` e ``titulo`` (spec, seção 1.3.2).
+
+    Args:
+        tarefa: Tarefa com tipos já validados.
+
+    Raises:
+        ContratoDeEntradaError: Se o id não for positivo ou o título for vazio ou longo demais.
+    """
+    if tarefa.id_tarefa <= 0:
+        _falhar(
+            ContratoDeEntradaError(
+                f"Tarefa {tarefa.id_tarefa}: id_tarefa deve ser positivo (> 0)."
+            )
+        )
+    if not tarefa.titulo.strip():
+        _falhar(
+            ContratoDeEntradaError(
+                f"Tarefa {tarefa.id_tarefa}: titulo vazio após remoção de espaços."
+            )
+        )
+    if len(tarefa.titulo) > _TAMANHO_MAXIMO_TITULO:
+        _falhar(
+            ContratoDeEntradaError(
+                f"Tarefa {tarefa.id_tarefa}: titulo com {len(tarefa.titulo)} caracteres "
+                f"excede o máximo de {_TAMANHO_MAXIMO_TITULO}."
+            )
+        )
+
+
+def _validar_dominio(tarefa: Tarefa) -> None:
+    """Verifica se prioridade e status pertencem aos domínios fechados (spec, seção 1.3.2).
+
+    Args:
+        tarefa: Tarefa com tipos já validados.
+
+    Raises:
+        ValorDeDominioInvalidoError: Se prioridade ou status estiverem fora do domínio.
+    """
+    for campo, dominio in (("prioridade", _PRIORIDADES), ("status", _STATUS_VALIDOS)):
+        valor = getattr(tarefa, campo)
+        if valor not in dominio:
+            _falhar(
+                ValorDeDominioInvalidoError(
+                    f"Tarefa {tarefa.id_tarefa}: {campo} '{valor}' fora do domínio "
+                    f"permitido ({', '.join(dominio)})."
+                )
+            )
+
+
+def _validar_status_e_conclusao(tarefa: Tarefa) -> None:
+    """Verifica a coerência entre status e ``data_conclusao`` (RN-08).
+
+    Args:
+        tarefa: Tarefa com domínio já validado.
+
+    Raises:
+        DataInconsistenteError: Se o status e a presença de ``data_conclusao`` divergirem.
+    """
+    concluida = tarefa.status == _STATUS_CONCLUIDA
+    if concluida and tarefa.data_conclusao is None:
+        _falhar(
+            DataInconsistenteError(
+                f"Tarefa {tarefa.id_tarefa}: status '{tarefa.status}' exige "
+                "data_conclusao preenchida (RN-08)."
+            )
+        )
+    if not concluida and tarefa.data_conclusao is not None:
+        _falhar(
+            DataInconsistenteError(
+                f"Tarefa {tarefa.id_tarefa}: status '{tarefa.status}' exige "
+                "data_conclusao nula (RN-08)."
+            )
+        )
+
+
+def _validar_cronologia(tarefa: Tarefa) -> None:
+    """Verifica a ordem temporal das datas, comparadas em UTC (RN-04 e RN-07).
+
+    Args:
+        tarefa: Tarefa com tipos já validados.
+
+    Raises:
+        DataInconsistenteError: Se o prazo não for posterior à criação, ou se
+            ``data_inicio`` ou ``data_conclusao`` forem anteriores à criação.
+    """
+    criacao = _para_utc(tarefa.data_criacao)
+    if _para_utc(tarefa.prazo) <= criacao:
+        _falhar(
+            DataInconsistenteError(
+                f"Tarefa {tarefa.id_tarefa}: prazo ({_formatar_data(tarefa.prazo)}) deve ser "
+                f"posterior à data_criacao ({_formatar_data(criacao)}) (RN-07)."
+            )
+        )
+    for campo in _DATAS_OPCIONAIS:
+        data = getattr(tarefa, campo)
+        if data is not None and _para_utc(data) < criacao:
+            _falhar(
+                DataInconsistenteError(
+                    f"Tarefa {tarefa.id_tarefa}: {campo} ({_formatar_data(data)}) anterior à "
+                    f"data_criacao ({_formatar_data(criacao)}) (RN-07)."
+                )
+            )
+
+
+def _validar_unicidade(tarefas: Sequence[Tarefa]) -> None:
+    """Verifica se não há ``id_tarefa`` repetido no conjunto (RN-09).
+
+    Args:
+        tarefas: Tarefas já validadas individualmente.
+
+    Raises:
+        IdentificadorDuplicadoError: No primeiro id repetido encontrado.
+    """
+    vistos: set[int] = set()
+    for tarefa in tarefas:
+        if tarefa.id_tarefa in vistos:
+            _falhar(
+                IdentificadorDuplicadoError(
+                    f"Tarefa {tarefa.id_tarefa}: id_tarefa repetido no conjunto (RN-09)."
+                )
+            )
+        vistos.add(tarefa.id_tarefa)
