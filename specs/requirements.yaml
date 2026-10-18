@@ -1,0 +1,124 @@
+# Derivado de specs/task_analyzer_spec.md (v2.0). Não editar à mão.
+# Em caso de divergência, prevalece a especificação em Markdown.
+
+especificacao:
+  modulo: TaskAnalyzer
+  versao: "2.0"
+  fonte_da_verdade: specs/task_analyzer_spec.md
+  autor: Antônio Vinicius Nunes de Alencar
+
+interface:
+  funcao_publica: analisar_tarefas
+  assinatura: "analisar_tarefas(tarefas: list[Tarefa]) -> RelatorioProdutividade"
+  funcoes_auxiliares: privadas, prefixadas com underscore
+
+entrada:
+  estrutura: Tarefa
+  imutavel: true
+  campos:
+    - {nome: id_tarefa, tipo: int, obrigatorio: true, restricao: "> 0 e único no conjunto"}
+    - {nome: titulo, tipo: str, obrigatorio: true, restricao: "não vazio após strip, até 200 caracteres"}
+    - {nome: prioridade, tipo: str, obrigatorio: true, dominio: [baixa, media, alta]}
+    - {nome: status, tipo: str, obrigatorio: true, dominio: [concluida, pendente, cancelada]}
+    - {nome: data_criacao, tipo: datetime, obrigatorio: true, restricao: UTC}
+    - {nome: data_inicio, tipo: "datetime | None", obrigatorio: false, restricao: ">= data_criacao"}
+    - {nome: prazo, tipo: datetime, obrigatorio: true, restricao: "> data_criacao"}
+    - {nome: data_conclusao, tipo: "datetime | None", obrigatorio: condicional, restricao: "obrigatória se concluida, nula nos demais status; >= data_criacao"}
+
+saida:
+  estrutura: RelatorioProdutividade
+  imutavel: true
+  campos:
+    - {nome: total_tarefas, tipo: int}
+    - {nome: total_concluidas, tipo: int}
+    - {nome: total_em_aberto, tipo: int, descricao: "apenas pendentes"}
+    - {nome: tempo_medio_conclusao_min, tipo: float, arredondamento: 2}
+    - {nome: taxa_atraso_percentual, tipo: float, arredondamento: 2}
+    - {nome: indicadores_por_prioridade, tipo: "dict[str, IndicadorPrioridade]", chaves_fixas: [baixa, media, alta]}
+  indicador_prioridade:
+    estrutura: IndicadorPrioridade
+    campos:
+      - {nome: total_tarefas, tipo: int}
+      - {nome: total_concluidas, tipo: int}
+      - {nome: tempo_medio_conclusao_min, tipo: "float | None", none_quando: "sem concluídas na prioridade"}
+      - {nome: taxa_atraso_percentual, tipo: "float | None", none_quando: "sem concluídas na prioridade"}
+
+regras_de_negocio:
+  - {id: RN-01, titulo: Base de cálculo das durações, descricao: "Apenas concluídas entram em tempo médio e taxa de atraso."}
+  - {id: RN-02, titulo: Duração da tarefa, descricao: "data_conclusao − data_criacao, em minutos (float)."}
+  - {id: RN-03, titulo: Definição de atraso, descricao: "Atrasada quando data_conclusao > prazo; no prazo exato não é atraso."}
+  - {id: RN-04, titulo: Fuso horário, descricao: "Datas em UTC; naive = UTC; outros fusos convertidos antes do cálculo."}
+  - {id: RN-05, titulo: Arredondamento, descricao: "2 casas decimais apenas na saída."}
+  - {id: RN-06, titulo: Proteção contra divisão por zero, descricao: "Sem concluídas no geral = SemTarefasConcluidasError; na prioridade = None."}
+  - {id: RN-07, titulo: Consistência temporal, descricao: "data_conclusao e data_inicio >= data_criacao; prazo > data_criacao."}
+  - {id: RN-08, titulo: Coerência entre status e datas, descricao: "concluida exige data_conclusao; pendente e cancelada exigem None."}
+  - {id: RN-09, titulo: Unicidade, descricao: "IDs duplicados invalidam a análise inteira."}
+  - {id: RN-10, titulo: Falha explícita, descricao: "Qualquer violação interrompe o processamento com a exceção correspondente."}
+  - {id: RN-11, titulo: Chaves fixas na saída, descricao: "baixa, media e alta sempre presentes."}
+  - {id: RN-12, titulo: Imutabilidade da entrada, descricao: "Objetos recebidos nunca são alterados."}
+
+excecoes:
+  base: TaskAnalyzerError
+  derivadas:
+    - {nome: ListaDeTarefasVaziaError, quando: "lista vazia"}
+    - {nome: ContratoDeEntradaError, quando: "campo obrigatório ausente ou com tipo incorreto"}
+    - {nome: ValorDeDominioInvalidoError, quando: "prioridade ou status fora do domínio"}
+    - {nome: DataInconsistenteError, quando: "violação de RN-07 ou RN-08"}
+    - {nome: IdentificadorDuplicadoError, quando: "violação de RN-09"}
+    - {nome: SemTarefasConcluidasError, quando: "nenhuma concluída (RN-06)"}
+
+cenarios_de_aceite:
+  - id: "1"
+    tipo: sucesso
+    esperado:
+      total_tarefas: 6
+      total_concluidas: 4
+      total_em_aberto: 1
+      tempo_medio_conclusao_min: 502.50
+      taxa_atraso_percentual: 50.00
+      indicadores_por_prioridade:
+        baixa: {total_tarefas: 1, total_concluidas: 1, tempo_medio_conclusao_min: 30.00, taxa_atraso_percentual: 0.00}
+        media: {total_tarefas: 2, total_concluidas: 1, tempo_medio_conclusao_min: 360.00, taxa_atraso_percentual: 100.00}
+        alta: {total_tarefas: 3, total_concluidas: 2, tempo_medio_conclusao_min: 810.00, taxa_atraso_percentual: 50.00}
+  - {id: 2.a, tipo: excecao, entrada: "data_conclusao anterior à data_criacao", excecao: DataInconsistenteError, regra: RN-07}
+  - {id: 2.b, tipo: excecao, entrada: "concluida com data_conclusao None", excecao: DataInconsistenteError, regra: RN-08}
+  - {id: 2.c, tipo: excecao, entrada: "prioridade urgente", excecao: ValorDeDominioInvalidoError, regra: "Domínio 1.3.2"}
+  - {id: 2.d, tipo: excecao, entrada: "lista vazia", excecao: ListaDeTarefasVaziaError, regra: RN-06}
+  - {id: 2.e, tipo: excecao, entrada: "3 tarefas sem nenhuma concluída", excecao: SemTarefasConcluidasError, regra: RN-06}
+  - {id: 3.a, tipo: borda, situacao: "conclusão no instante do prazo", esperado: "não é atraso; taxa 0,00%"}
+  - {id: 3.b, tipo: borda, situacao: "prioridade baixa sem tarefas", esperado: "chave presente, totais zero, métricas None"}
+  - {id: 3.c, tipo: borda, situacao: "todas concluídas e atrasadas", esperado: "taxa 100,00%"}
+  - {id: 3.d, tipo: borda, situacao: "id_tarefa repetido", esperado: IdentificadorDuplicadoError}
+  - {id: 3.e, tipo: borda, situacao: "duração zero", esperado: "0,0 min válido e entra na média"}
+  - {id: 3.f, tipo: borda, situacao: "fuso diferente de UTC", esperado: "resultado idêntico ao equivalente em UTC"}
+
+qualidade:
+  cobertura_minima_percentual: 90
+  harness: tests/test_harness.py
+  harness_imutavel: true
+
+dependencias:
+  producao: [biblioteca padrão do Python 3.11+]
+  testes: [pytest, pytest-cov]
+  proibidas_em_producao: [pandas, numpy, dateutil, pydantic]
+
+infraestrutura:
+  ci:
+    arquivo: .github/workflows/ci.yml
+    motor: GitHub Actions
+    gatilhos: {push: [main, develop], pull_request: [main, develop]}
+    ambiente: {sistema: ubuntu-latest, python: "3.11"}
+    preparacao: pip install -r requirements.txt
+    execucao: pytest tests/test_harness.py -v
+    permissoes: {contents: read}
+  container:
+    arquivos: [Dockerfile, docker-compose.yml, .dockerignore]
+    imagem_base: python:3.11-slim
+    usuario: nao-root
+    comando: pytest tests/test_harness.py -v
+    orquestracao: docker compose run --rm tests
+
+versionamento:
+  branches: {estavel: main, integracao: develop, incrementos: "feature/*"}
+  merge: Pull Request com revisão humana e CI verde
+  tags: [v1.0-fase2, v2.0-fase3]
