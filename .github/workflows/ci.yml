@@ -39,3 +39,16 @@ jobs:
         run: >-
           pytest tests/test_harness.py -v
           --cov=src --cov-report=term-missing --cov-fail-under=90
+
+  docker:
+    name: Test Harness no contêiner (python:3.11-slim)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v5
+
+      - name: Construir a imagem
+        run: docker compose build tests
+
+      - name: Executar a suíte no contêiner
+        run: docker compose run --rm tests
