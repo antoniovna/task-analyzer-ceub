@@ -2,11 +2,15 @@
 
 > Bootcamp III — Ciência da Computação · Desafio — Entrega Inicial (Fase 1)
 > Autor: Antônio Vinicius Nunes de Alencar · antonio.alencar@sempreceub.com
-> Data de elaboração: 11/09/2026 · Versão da especificação: **1.0**
+> Data de elaboração: 11/09/2026 · Versão da especificação: **2.0** (17/10/2026 — Fase 3)
 
 Este documento é a **fonte da verdade** do projeto. O agente de IA implementa o que está aqui —
 nem mais, nem menos. Qualquer mudança de comportamento exige nova versão deste arquivo, aprovada
 por humano via Pull Request.
+
+Dois artefatos são **derivados** deste arquivo e nunca editados à mão:
+`specs/system_design_document.pdf` (versão para leitura e entrega) e `specs/requirements.yaml`
+(versão legível por máquina do contrato). Em caso de divergência, prevalece este arquivo.
 
 ---
 
@@ -23,7 +27,7 @@ por humano via Pull Request.
 | Disciplina | Bootcamp III — 75 horas — EAD (Disciplina Virtual) |
 | Atividade | Desafio — Entrega Inicial (Fase 1 de 3) |
 | Data de elaboração | 11/09/2026 |
-| Versão da especificação | 1.0 |
+| Versão da especificação | 2.0 (Fase 3 — infraestrutura de CI/CD e containerização) |
 
 ### 1.2 Propósito do módulo TaskAnalyzer
 
@@ -302,32 +306,46 @@ As diretrizes arquiteturais, proibições e regras de interação com a IA estã
 
 ```
 sdd-task-analyzer/
+├── .github/
+│   └── workflows/
+│       └── ci.yml                     # Pipeline de CI (seção 4.4)
+├── Dockerfile                         # Empacotamento (seção 4.5)
+├── docker-compose.yml                 # Orquestração (seção 4.5)
+├── .dockerignore
 ├── README.md
 ├── CONTEXT_RULES.md
 ├── .gitignore
 ├── requirements.txt
 ├── specs/
-│   └── task_analyzer_spec.md
+│   ├── task_analyzer_spec.md          # Fonte da verdade
+│   ├── system_design_document.pdf     # Derivado deste arquivo
+│   └── requirements.yaml              # Derivado deste arquivo
 ├── tests/
 │   └── test_harness.py
 └── src/
     └── task_analyzer.py
 ```
 
-Alterar a árvore é proibido ao agente de IA e exige nova versão desta especificação.
+Alterar a árvore é proibido ao agente de IA e exige nova versão desta especificação. A versão 2.0
+acrescentou os arquivos de infraestrutura e os dois derivados da especificação; `src/` e `tests/`
+não mudaram.
 
 ### 4.2 Versionamento
 
 - **Branches:** `main` (estável, recebe apenas releases), `develop` (integração), `feature/*` (um
   incremento por branch).
 - **Merge** somente por Pull Request com revisão humana registrada.
-- **Commits** no padrão `tipo: descrição` (`feat`, `fix`, `test`, `docs`, `refactor`), com o corpo
-  registrando o que foi gerado por IA e o que foi corrigido manualmente.
+- **Commits** no padrão `tipo: descrição` (`feat`, `fix`, `test`, `docs`, `refactor`, `chore`,
+  `ci`, `build`), com o corpo registrando o que foi gerado por IA e o que foi corrigido
+  manualmente.
+- **Proteção de branch:** `main` e `develop` só aceitam merge com o pipeline da seção 4.4
+  aprovado.
 - **Tags:** `v1.0-fase2` ao fim da implementação; `v2.0-fase3` após o pipeline de CI/CD.
 
 ### 4.3 Homologação humana (cinco passos)
 
-1. **Testes automatizados** — suíte completa com cobertura; qualquer falha reprova.
+1. **Testes automatizados** — suíte completa com cobertura, executada pelo pipeline de CI no Pull
+   Request; qualquer falha reprova.
 2. **Conformidade com o contrato** — assinatura, estruturas de entrada/saída, RN-01 a RN-12 e
    CONTEXT_RULES.
 3. **Qualidade de código** — legibilidade, coesão, docstrings, ausência de duplicação e código
@@ -338,6 +356,35 @@ Alterar a árvore é proibido ao agente de IA e exige nova versão desta especif
 
 Reprovação em qualquer passo devolve o código para nova geração, com o motivo registrado no PR.
 
+### 4.4 Pipeline de integração contínua (`.github/workflows/ci.yml`)
+
+| Item | Contrato |
+|------|----------|
+| Motor | GitHub Actions |
+| Gatilhos | `push` e `pull_request` nas branches `main` e `develop` |
+| Ambiente | `ubuntu-latest` com Python 3.11 |
+| Preparação | `pip install -r requirements.txt` — nenhuma dependência fora desse arquivo |
+| Execução | `pytest tests/test_harness.py -v`, com cobertura de `src/` e meta mínima de 90% (seção 2.4) |
+| Permissões | Somente leitura do repositório (`contents: read`); nenhum segredo é necessário |
+| Aprovação | Execução verde = todos os testes aprovados **e** cobertura ≥ 90% |
+
+O harness importa o módulo como `src.task_analyzer`, então a raiz do repositório precisa estar no
+caminho de importação do Python. O pipeline e a imagem Docker fazem isso definindo a variável de
+ambiente `PYTHONPATH` na raiz — sem arquivos de configuração do pytest e sem tocar no harness.
+
+### 4.5 Containerização (`Dockerfile` e `docker-compose.yml`)
+
+| Item | Contrato |
+|------|----------|
+| Imagem base | `python:3.11-slim` |
+| Conteúdo | `requirements.txt`, `src/` e `tests/` — nada além do necessário para rodar a suíte |
+| Usuário | Não-root |
+| Comando de entrada (`CMD`) | `pytest tests/test_harness.py -v`, com os mesmos critérios do pipeline |
+| Orquestração | Serviço `tests` no `docker-compose.yml`; a suíte inteira roda com um único comando: `docker compose run --rm tests` |
+
+O contêiner e o pipeline executam exatamente a mesma suíte, com o mesmo critério de aprovação:
+uma execução local verde no Docker reproduz o resultado do CI em qualquer máquina.
+
 ---
 
 ## Histórico de revisões
@@ -346,3 +393,4 @@ Reprovação em qualquer passo devolve o código para nova geração, com o moti
 |--------|------|-----------|
 | 1.0 | 11/09/2026 | Versão original da Fase 1. |
 | 1.0 (transposição) | 15/10/2026 | Transposição para Markdown. Correções de digitação sem mudança de comportamento: (a) "Data de elaboração" na tabela 1.1 preenchida com 11/09/2026; (b) variação 2.a corrigida para "`data_conclusao` anterior à `data_criacao`"; (c) `IdentificadorDuplicadoError` incluída no `Raises` da assinatura, já prevista na seção 1.5; (d) seção 4 incorporada a partir da apresentação de arquitetura, pois a seção 3.2 a referencia. |
+| 2.0 | 17/10/2026 | Fase 3. Árvore da seção 4.1 ampliada com infraestrutura (`ci.yml`, `Dockerfile`, `docker-compose.yml`, `.dockerignore`) e com os derivados `system_design_document.pdf` e `requirements.yaml`; novas seções 4.4 (pipeline de CI) e 4.5 (containerização); proteção de branch e tipos de commit `chore`, `ci` e `build` na seção 4.2. Sem mudança de comportamento do módulo: seções 1 e 2, `src/` e `tests/` inalterados. |
