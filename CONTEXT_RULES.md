@@ -13,6 +13,8 @@ Você atua como gerador de código sob especificação. A fonte da verdade é
 
 - Python 3.11+, apenas biblioteca padrão no código de produção (`src/`).
 - `pytest` e `pytest-cov` permitidos exclusivamente em `tests/`.
+- Infraestrutura (seções 4.4 e 4.5 da especificação): GitHub Actions em `ubuntu-latest` com
+  Python 3.11, e Docker com a imagem base `python:3.11-slim`.
 
 ## 3. Diretrizes obrigatórias
 
@@ -52,6 +54,18 @@ Você atua como gerador de código sob especificação. A fonte da verdade é
 - Não acessar rede, sistema de arquivos, variáveis de ambiente ou o relógio do sistema.
 - Não comentar código em excesso — comentários apenas onde a intenção não é evidente pelo nome.
 
+### 4.1 Proibições de infraestrutura
+
+- Não enfraquecer o pipeline nem o contêiner para obter uma execução verde: nada de pular,
+  desmarcar ou filtrar testes (`-k`, `--deselect`, `skip`), reduzir a meta de cobertura, usar
+  `continue-on-error` ou mascarar falhas com `|| true`.
+- Não instalar dependências fora do `requirements.txt`, nem no pipeline nem na imagem.
+- Não trocar a imagem base `python:3.11-slim` nem executar o contêiner como root.
+- Não ampliar as permissões do workflow além de `contents: read`, nem incluir segredos, tokens ou
+  credenciais em qualquer arquivo do repositório.
+- Não editar à mão `specs/system_design_document.pdf` nem `specs/requirements.yaml`: ambos são
+  regenerados a partir de `specs/task_analyzer_spec.md`.
+
 ## 5. Protocolo de dúvida
 
 Em caso de ambiguidade, **PARE e pergunte**. Não preencha lacunas por conta própria.
@@ -75,3 +89,6 @@ Em caso de ambiguidade, **PARE e pergunte**. Não preencha lacunas por conta pr�
 
 Código pronto = todos os testes de `tests/test_harness.py` passando, sem alteração do harness, com
 cobertura ≥ 90% e conformidade integral com as seções 3 e 4 deste arquivo.
+
+Infraestrutura pronta = pipeline de CI verde no Pull Request e a mesma suíte aprovada dentro do
+contêiner com `docker compose run --rm tests`.

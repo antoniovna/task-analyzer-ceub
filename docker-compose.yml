@@ -1,0 +1,6 @@
+# Orquestração da suíte de testes — contrato na seção 4.5 de specs/task_analyzer_spec.md.
+# Uso: docker compose run --rm tests
+services:
+  tests:
+    build: .
+    image: sdd-task-analyzer:latest

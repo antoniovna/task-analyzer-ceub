@@ -1,0 +1,20 @@
+# Contexto de build mínimo: a imagem só precisa de requirements.txt, src/ e tests/.
+.git/
+.github/
+.venv/
+venv/
+env/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.vscode/
+.idea/
+specs/
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore
